@@ -178,6 +178,14 @@ export default function Home() {
   const [watermarkY, setWatermarkY] = useState(0.88);  // center position, fraction of height (0-1)
   const [watermarkOpacity, setWatermarkOpacity] = useState(0.9);
   const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  // Corner logo overlay (logo / badge fixed to one of the four corners), with
+  // corner position + opacity controls.
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [logoCorner, setLogoCorner] = useState("br"); // "tl" | "tr" | "bl" | "br"
+  const [logoSize, setLogoSize] = useState(0.12);      // fraction of the smaller canvas edge
+  const [logoOpacity, setLogoOpacity] = useState(0.9);
+  const [logoEnabled, setLogoEnabled] = useState(false);
   const [aspect, setAspect] = useState("16:9");
   const [fps, setFps] = useState(30);
   const [renderQuality, setRenderQuality] = useState("full"); // "full" | "720p"
@@ -271,6 +279,15 @@ export default function Home() {
     setWatermarkFile(file);
     setWatermarkUrl(URL.createObjectURL(file));
     setWatermarkEnabled(true);
+  }, []);
+
+  const onLogo = useCallback(async (files) => {
+    const file = files[0];
+    if (!file) return;
+    setError(null);
+    setLogoFile(file);
+    setLogoUrl(URL.createObjectURL(file));
+    setLogoEnabled(true);
   }, []);
 
   // --- Background music (BG lane) -------------------------------------------
@@ -1084,6 +1101,7 @@ export default function Home() {
         voiceLevel,
         overlayFile, overlayUrl, overlayDuration, overlayOpacity, overlayBlendMode, overlayLoop, overlayEnabled,
         watermarkFile, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled,
+        logoFile, logoUrl, logoCorner, logoSize, logoOpacity, logoEnabled,
         textOverlays,
         onProgress: setProgress,
       });
@@ -1098,7 +1116,9 @@ export default function Home() {
       captionsOn, captionCues, captionStyle, captionSize, captionLineHeight, captionFontScale, captionAnimation, mixedAudio,
       voiceFx, voiceLevel,
       overlayFile, overlayUrl, overlayDuration, overlayOpacity, overlayBlendMode, overlayLoop, overlayEnabled,
-      watermarkFile, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled]);
+      watermarkFile, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled,
+      logoFile, logoUrl, logoCorner, logoSize, logoOpacity, logoEnabled,
+      textOverlays]);
 
   // --- SPIKE: WebCodecs GPU render (video-only, no audio). Proves the pipeline. ---
   const [wcBusy, setWcBusy] = useState(false);
@@ -1195,6 +1215,7 @@ export default function Home() {
           voiceLevel,
           overlayFile, overlayUrl, overlayDuration, overlayOpacity, overlayBlendMode, overlayLoop, overlayEnabled,
           watermarkFile, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled,
+          logoFile, logoUrl, logoCorner, logoSize, logoOpacity, logoEnabled,
         },
         imagesByName,
         (frac, phase) => { setWcProgress(frac); if (phase) setWcPhase(phase); },
@@ -1271,7 +1292,8 @@ export default function Home() {
       captionsOn, captionCues, captionStyle, captionSize, captionLineHeight, captionFontScale, captionAnimation,
       mixedAudio, voiceFx, voiceLevel,
       overlayFile, overlayUrl, overlayDuration, overlayOpacity, overlayBlendMode, overlayLoop, overlayEnabled,
-      watermarkFile, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled]);
+      watermarkFile, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled,
+      logoFile, logoUrl, logoCorner, logoSize, logoOpacity, logoEnabled]);
 
   // Browser can't export video (no H.264 WebCodecs, no render backend) — block the
   // whole app; there's no point letting them create projects they can't render.
@@ -1527,6 +1549,13 @@ export default function Home() {
           watermarkY={watermarkY} setWatermarkY={setWatermarkY}
           watermarkOpacity={watermarkOpacity} setWatermarkOpacity={setWatermarkOpacity}
           watermarkEnabled={watermarkEnabled} setWatermarkEnabled={setWatermarkEnabled}
+          logoUrl={logoUrl}
+          setLogoFile={setLogoFile} setLogoUrl={setLogoUrl}
+          logoCorner={logoCorner} setLogoCorner={setLogoCorner}
+          logoSize={logoSize} setLogoSize={setLogoSize}
+          logoOpacity={logoOpacity} setLogoOpacity={setLogoOpacity}
+          logoEnabled={logoEnabled} setLogoEnabled={setLogoEnabled}
+          onLogo={onLogo}
           textOverlays={textOverlays}
           addTextOverlay={addTextOverlay}
           updateTextOverlay={updateTextOverlay}

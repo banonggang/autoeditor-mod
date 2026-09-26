@@ -9,7 +9,7 @@ import {
 import { FX_LIST, fxOf, applyFx, fxSeed } from "../lib/imageEffects";
 import {
   CAPTION_STYLE_LIST, CAPTION_SIZES, CAPTION_ANIMATION_LIST,
-  captionCueAt, drawCaption, captionFontPx, captionLineHeightDefault, drawWatermark,
+  captionCueAt, drawCaption, captionFontPx, captionLineHeightDefault, drawWatermark, drawCornerLogo,
 } from "../lib/captions";
 import { drawTextOverlays } from "../lib/textOverlay";
 import { SFX_LIB, previewSfx, stopSfxPreviews } from "../lib/sfx";
@@ -158,6 +158,13 @@ export default function Editor({
   watermarkOpacity, setWatermarkOpacity,
   watermarkEnabled, setWatermarkEnabled,
   onWatermark,
+  logoUrl,
+  setLogoFile, setLogoUrl,
+  logoCorner, setLogoCorner,
+  logoSize, setLogoSize,
+  logoOpacity, setLogoOpacity,
+  logoEnabled, setLogoEnabled,
+  onLogo,
   textOverlays = [], addTextOverlay, updateTextOverlay, removeTextOverlay, replaceTextOverlays,
 }) {
   const canvasRef = useRef(null);
@@ -186,6 +193,8 @@ export default function Editor({
   const watermarkImgRef = useRef(null); // watermark image element for preview
   const fxBufRef = useRef(null); // offscreen canvas for the image-effect filter pass
   const watermarkInputRef = useRef(null);
+  const logoImgRef = useRef(null);     // corner-logo image element for preview
+  const logoInputRef = useRef(null);
   const rafRef = useRef(0);
   const fileInputRef = useRef(null);
   const capInputRef = useRef(null);
@@ -315,6 +324,7 @@ export default function Editor({
       fadeIn, fadeOut,
       overlayEnabled, overlayOpacity, overlayBlendMode, overlayLoop,
       watermarkEnabled, watermarkSize, watermarkX, watermarkY, watermarkOpacity,
+      logoEnabled, logoCorner, logoSize, logoOpacity,
       voiceFx,
       textOverlays: (Array.isArray(textOverlays) ? textOverlays : []).map((o) => ({
         text: o.text, start: o.start, end: o.end, x: o.x, y: o.y, size: o.size, opacity: o.opacity, color: o.color,
@@ -323,6 +333,10 @@ export default function Editor({
     if (watermarkEnabled && watermarkUrl) {
       const data = await encodeImageDataUrl(watermarkUrl);
       if (data) config.watermarkData = data;
+    }
+    if (logoEnabled && logoUrl) {
+      const data = await encodeImageDataUrl(logoUrl);
+      if (data) config.logoData = data;
     }
     // Overlay textures toothe video-overlay panel can hold an image (a logo/light
     // leak/grain still) — embed that too when it is one. Actual video files fail to
@@ -343,11 +357,13 @@ export default function Editor({
   }, [presetName, presets, persistPresets, flashPresetMsg, aspect, fps, renderQuality,
       transitionDuration, transitionsByName, motionAmount, motionByName, fxAmount, fxByName,
       fadeIn, fadeOut, overlayEnabled, overlayUrl, overlayOpacity, overlayBlendMode, overlayLoop,
-      watermarkEnabled, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, voiceFx, textOverlays]);
+      watermarkEnabled, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity,
+      logoEnabled, logoUrl, logoCorner, logoSize, logoOpacity, voiceFx, textOverlays]);
 
   // Re-apply a saved preset to the current project. Per-clip transitions / motion /
   // effects are matched by clip name, so they only land on clips with the same names.
-  const gotLogo = (c) => typeof c.watermarkData === "string" && c.watermarkData.startsWith("data:image/");
+  const gotLogo = (c, key) => typeof c[key] === "string" && c[key].startsWith("data:image/");
+  const gotWatermark = (c) => typeof c.watermarkData === "string" && c.watermarkData.startsWith("data:image/");
   const gotOverlay = (c) => typeof c.overlayData === "string" && c.overlayData.startsWith("data:image/");
   const applyPreset = useCallback(async (p) => {
     const c = (p && p.config) || {};
@@ -373,12 +389,25 @@ export default function Editor({
     if (c.watermarkOpacity != null && setWatermarkOpacity) setWatermarkOpacity(c.watermarkOpacity);
     // Restore the embedded logo itself so the preset brings back the overlay in
     // one click — no re-adding (rebuilt as a File so the server upload works too).
-    if (gotLogo(c) && setWatermarkFile && setWatermarkUrl) {
+    if (gotWatermark(c) && setWatermarkFile && setWatermarkUrl) {
       const file = await dataUrlToFile(c.watermarkData, "preset-logo.png");
       if (file) {
         setWatermarkFile(file);
         setWatermarkUrl(c.watermarkData);
         setWatermarkEnabled(true);
+      }
+    }
+    if (c.logoEnabled != null && setLogoEnabled) setLogoEnabled(!!c.logoEnabled);
+    if (c.logoCorner != null && setLogoCorner) setLogoCorner(c.logoCorner);
+    if (c.logoSize != null && setLogoSize) setLogoSize(c.logoSize);
+    if (c.logoOpacity != null && setLogoOpacity) setLogoOpacity(c.logoOpacity);
+    // Same for the corner-logo overlay when a preset embedded its image.
+    if (gotLogo(c, "logoData") && setLogoFile && setLogoUrl) {
+      const file = await dataUrlToFile(c.logoData, "preset-corner-logo.png");
+      if (file) {
+        setLogoFile(file);
+        setLogoUrl(c.logoData);
+        setLogoEnabled(true);
       }
     }
     // Same for the video-overlay panel when it held an image (logo/texture still).
@@ -397,14 +426,16 @@ export default function Editor({
         id: crypto.randomUUID ? crypto.randomUUID() : `to-${Date.now()}-${i}`,
       })));
     }
-    const overlayWaiting = (c.overlayEnabled && !gotOverlay(c)) || (c.watermarkEnabled && !gotLogo(c));
+    const overlayWaiting = (c.overlayEnabled && !gotOverlay(c)) || (c.watermarkEnabled && !gotWatermark(c)) || (c.logoEnabled && !gotLogo(c, "logoData"));
     flashPresetMsg(
       overlayWaiting ? `Applied preset “${p.name}”. Overlay files (if any) need re-adding.` : `Applied preset “${p.name}”.`
     );
   }, [setTransition, setMotion, setFx, setFadeIn, setFadeOut, setOverlayEnabled, setOverlayOpacity,
       setOverlayBlendMode, setOverlayLoop, setOverlayFile, setOverlayUrl,
       setWatermarkEnabled, setWatermarkSize, setWatermarkX,
-      setWatermarkY, setWatermarkOpacity, setWatermarkFile, setWatermarkUrl, replaceTextOverlays, flashPresetMsg]);
+      setWatermarkY, setWatermarkOpacity, setWatermarkFile, setWatermarkUrl,
+      setLogoEnabled, setLogoCorner, setLogoSize, setLogoOpacity, setLogoFile, setLogoUrl,
+      replaceTextOverlays, flashPresetMsg]);
 
   const deletePreset = useCallback((id) => {
     const gone = presets.find((p) => p.id === id);
@@ -764,11 +795,18 @@ export default function Editor({
     if (watermarkEnabled && wImg && watermarkUrl) {
       drawWatermark(ctx, wImg, W, H, { size: watermarkSize, x: watermarkX, y: watermarkY, opacity: watermarkOpacity });
     }
+    // Corner logo overlay — the very top-most layer, mirroring the render.
+    const lImg = logoImgRef.current;
+    if (logoEnabled && lImg && logoUrl) {
+      drawCornerLogo(ctx, lImg, W, H, { corner: logoCorner, size: logoSize, opacity: logoOpacity });
+    }
   }, [clips, imageEls, transitionsByName, transitionDuration, motionByName, motionAmount, fxByName, fxAmount,
       fadeIn, fadeOut, duration, exportDuration, playing, videoInfoByName, videoParams, volumeByName,
       captionsOn, captionCues, captionStyle, captionSize, captionLineHeight, captionFontScale, captionAnimation,
       overlayEnabled, overlayUrl, overlayOpacity, overlayBlendMode, overlayDuration,
-      watermarkEnabled, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity, textOverlays]);
+      watermarkEnabled, watermarkUrl, watermarkSize, watermarkX, watermarkY, watermarkOpacity,
+      logoEnabled, logoUrl, logoCorner, logoSize, logoOpacity,
+      textOverlays]);
 
   useEffect(() => { drawRef.current = draw; }, [draw]);
   useEffect(() => { timeRef.current = time; }, [time]);
@@ -1144,6 +1182,7 @@ export default function Editor({
             hidden
           />
           <img ref={watermarkImgRef} src={watermarkUrl} alt="" hidden />
+          <img ref={logoImgRef} src={logoUrl} alt="" hidden />
         </div>
 
         {(() => {
@@ -2261,6 +2300,80 @@ export default function Editor({
             </div>
           )}
 
+        </div>
+
+        <div className="panel video-overlay">
+          <h2 className="panel__h">Logo Overlay</h2>
+          <div className="mini-h">Add a logo (e.g., your brand badge) fixed to one of the four corners of the video.</div>
+          <input
+            type="file" accept="image/*" hidden
+            ref={logoInputRef}
+            onChange={(e) => onLogo(e.target.files)}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="trall"
+              onClick={() => logoInputRef.current && logoInputRef.current.click()}
+              disabled={logoEnabled && !logoUrl}
+            >
+              {logoEnabled ? "Replace Logo" : "+ Add Logo"}
+            </button>
+            {logoEnabled && (
+              <button
+                type="button"
+                className="mbtn mbtn--danger"
+                onClick={() => {
+                  setLogoEnabled(false);
+                  setLogoFile(null);
+                  setLogoUrl(null);
+                }}
+                style={{ padding: "6px 12px" }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          {logoEnabled && logoUrl && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                {[
+                  ["tl", "Top left"], ["tr", "Top right"], ["bl", "Bottom left"], ["br", "Bottom right"],
+                ].map(([val, lab]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    className={`trchip ${logoCorner === val ? "is-on" : ""}`}
+                    onClick={() => setLogoCorner(val)}
+                    style={{ fontSize: 11, padding: "5px 10px" }}
+                  >
+                    {lab}
+                  </button>
+                ))}
+              </div>
+              <label className="trdur" style={{ marginBottom: 8 }}>
+                <span style={{ fontSize: 11 }}>Size</span>
+                <input
+                  type="range" min={0.02} max={0.4} step={0.01}
+                  value={logoSize}
+                  onChange={(e) => setLogoSize(+e.target.value)}
+                />
+                <span className="trdur__val" style={{ fontSize: 11 }}>{Math.round(logoSize * 100)}%</span>
+              </label>
+              <label className="trdur" style={{ marginBottom: 8 }}>
+                <span style={{ fontSize: 11 }}>Opacity</span>
+                <input
+                  type="range" min={0} max={1} step={0.05}
+                  value={logoOpacity}
+                  onChange={(e) => setLogoOpacity(+e.target.value)}
+                />
+                <span className="trdur__val" style={{ fontSize: 11 }}>{Math.round(logoOpacity * 100)}%</span>
+              </label>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                The logo keeps its aspect ratio and stays inside the frame.
+              </div>
+            </div>
+          )}
         </div>
         {/* --- Text overlays --- */}
         <div className="panel video-overlay">

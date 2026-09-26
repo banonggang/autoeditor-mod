@@ -158,6 +158,31 @@ function watermarkChain({ parts, last, markIdx, width, height, size = 0.15, x = 
   return "vwm";
 }
 
+// A logo anchored to one of the four corners: aspect kept, scaled to at most
+// `size` × the smaller canvas edge (never upscaled), inset by `margin` × the
+// corresponding edge, drawn at `opacity` alpha. `corner` ∈ "tl"|"tr"|"bl"|"br".
+// Like the watermark, applied LAST (on top of captions + fades). Adds the logo as
+// a new input whose index is `logoIdx`.
+function cornerChain({ parts, last, logoIdx, width, height, corner = "br", size = 0.12, opacity = 0.9, margin = 0.04 }) {
+  const f = (v, d) => (isFinite(+v) ? Math.min(1, Math.max(0, +v)) : d);
+  const cap = Math.max(1, Math.round(Math.min(width, height) * Math.min(1, Math.max(0.01, isFinite(+size) ? +size : 0.12))));
+  const A = f(opacity, 0.9);
+  const m = f(margin, 0.04);
+  const c = String(corner || "br").toLowerCase();
+  const mx = (m * width).toFixed(2);
+  const my = (m * height).toFixed(2);
+  const cx = c === "tl" || c === "bl" ? mx : `main_w-overlay_w-${mx}`;
+  const cy = c === "tl" || c === "tr" ? my : `main_h-overlay_h-${my}`;
+  parts.push(
+    `[${last}]format=rgba[lgBase];` +
+    `[${logoIdx}:v]scale=w='min(${cap},iw)':h='min(${cap},ih)':force_original_aspect_ratio=decrease:flags=lanczos,` +
+    `format=rgba,colorchannelmixer=aa=${A.toFixed(3)}[lgLogo];` +
+    `[lgBase][lgLogo]overlay=x='${cx}':y='${cy}'[lgMix];` +
+    `[lgMix]format=yuv420p[vlg]`,
+  );
+  return "vlg";
+}
+
 // Video codec args per encoder. Hardware encoders (qsv/nvenc/amf) offload the
 // H.264 encode to the GPU and are far faster than CPU libx264.
 function videoCodecArgs(encoder) {
@@ -252,7 +277,7 @@ function sfxClipFilters(s) {
   return out;
 }
 
-function graphArgs({ clips, paths, audioName, width, height, fps, transitions, transitionDuration, motions, motionAmount = 0.08, trims, volumes, speeds, audible, fadeIn, fadeOut, total, capChain, textChain = "", encoder, overlayName = null, overlayDuration = 0, overlayOpacity = 0.3, overlayBlendMode = "overlay", overlayLoop = true, overlayEnabled = false, watermarkName = null, watermarkSize = 0.15, watermarkX = 0.8, watermarkY = 0.88, watermarkOpacity = 0.9, watermarkEnabled = false, sfxClips = [], voiceFx, voiceLevel = 1 }, filterFiles) {
+function graphArgs({ clips, paths, audioName, width, height, fps, transitions, transitionDuration, motions, motionAmount = 0.08, trims, volumes, speeds, audible, fadeIn, fadeOut, total, capChain, textChain = "", encoder, overlayName = null, overlayDuration = 0, overlayOpacity = 0.3, overlayBlendMode = "overlay", overlayLoop = true, overlayEnabled = false, watermarkName = null, watermarkSize = 0.15, watermarkX = 0.8, watermarkY = 0.88, watermarkOpacity = 0.9, watermarkEnabled = false, logoName = null, logoCorner = "br", logoSize = 0.12, logoOpacity = 0.9, logoEnabled = false, sfxClips = [], voiceFx, voiceLevel = 1 }, filterFiles) {
   const n = clips.length;
   const { inputs, parts, last: vEnd } = buildVideoChain(clips, paths, { width, height, fps, transitions, transitionDuration, motions, motionAmount, trims, speeds });
   let last = vEnd;
@@ -273,6 +298,13 @@ function graphArgs({ clips, paths, audioName, width, height, fps, transitions, t
     const wmIdx = n + 1 + (overlayEnabled && overlayName ? 1 : 0); // after audio + texture overlay
     wmInputs = ["-i", watermarkName];
     last = watermarkChain({ parts, last, markIdx: wmIdx, width, height, size: watermarkSize, x: watermarkX, y: watermarkY, opacity: watermarkOpacity });
+  }
+  // Corner logo, above the watermark (it is the very top-most layer).
+  let lgInputs = [];
+  if (logoEnabled && logoName) {
+    const lgIdx = n + 1 + (overlayEnabled && overlayName ? 1 : 0) + (watermarkEnabled && watermarkName ? 1 : 0);
+    lgInputs = ["-i", logoName];
+    last = cornerChain({ parts, last, logoIdx: lgIdx, width, height, corner: logoCorner, size: logoSize, opacity: logoOpacity });
   }
 
   // Audio: the voiceover is input n. Any video clip with a volume above 0 (and an
@@ -295,7 +327,7 @@ function graphArgs({ clips, paths, audioName, width, height, fps, transitions, t
       vAudio.push(`[${lbl}]`);
     }
   }
-  const sfxBase = n + 1 + (overlayEnabled && overlayName ? 1 : 0) + (watermarkEnabled && watermarkName ? 1 : 0);
+  const sfxBase = n + 1 + (overlayEnabled && overlayName ? 1 : 0) + (watermarkEnabled && watermarkName ? 1 : 0) + (logoEnabled && logoName ? 1 : 0);
   for (let k = 0; k < sfxClips.length; k++) {
     const s = sfxClips[k];
     const startMs = Math.round((s.at || 0) * 1000);
@@ -325,7 +357,7 @@ function graphArgs({ clips, paths, audioName, width, height, fps, transitions, t
   const sfxInputs = sfxClips.flatMap((s) => ["-i", s.path]);
   filterFiles.push({ name: "fc.txt", text: parts.join(";") });
   return [
-    ...inputs, "-i", audioName, ...overlayInputs, ...wmInputs, ...sfxInputs,
+    ...inputs, "-i", audioName, ...overlayInputs, ...wmInputs, ...lgInputs, ...sfxInputs,
     "-filter_complex_script", "fc.txt",
     "-map", `[${last}]`, "-map", amap,
     "-t", total.toFixed(3),
@@ -412,8 +444,9 @@ function buildSegmentedPlan(spec, io) {
     textOverlays,
     voiceFx, voiceLevel = 1,
     overlayDuration = 0, overlayOpacity = 0.3, overlayBlendMode = "overlay", overlayLoop = true, overlayEnabled = false,
-    watermarkSize = 0.15, watermarkX = 0.8, watermarkY = 0.88, watermarkOpacity = 0.9, watermarkEnabled = false } = spec;
-  const { paths, audioName, encoder = "libx264", audible, overlayName = null, watermarkName = null, sfxClips = [] } = io;
+    watermarkSize = 0.15, watermarkX = 0.8, watermarkY = 0.88, watermarkOpacity = 0.9, watermarkEnabled = false,
+    logoCorner = "br", logoSize = 0.12, logoOpacity = 0.9, logoEnabled = false } = spec;
+  const { paths, audioName, encoder = "libx264", audible, overlayName = null, watermarkName = null, logoName = null, sfxClips = [] } = io;
   const n = clips.length;
   const frame = 1 / fps;
   const tdur = (k) => transitionDur(transitions, transitionDuration, k, frame);
@@ -492,8 +525,15 @@ function buildSegmentedPlan(spec, io) {
       wmInputs = ["-i", watermarkName];
       last = watermarkChain({ parts, last, markIdx: wmIdx, width, height, size: watermarkSize, x: watermarkX, y: watermarkY, opacity: watermarkOpacity });
     }
+    // Corner logo, above the watermark.
+    let lgInputs = [];
+    if (logoEnabled && logoName) {
+      const lgIdx = segClips.length + (overlayEnabled && overlayName ? 1 : 0) + (watermarkEnabled && watermarkName ? 1 : 0);
+      lgInputs = ["-i", logoName];
+      last = cornerChain({ parts, last, logoIdx: lgIdx, width, height, corner: logoCorner, size: logoSize, opacity: logoOpacity });
+    }
     const fc = `fc_s${s}.txt`, out = `seg${s}.mp4`;
-    const args = [...inputs, ...overlayInputs, ...wmInputs, "-filter_complex_script", fc, "-map", `[${last}]`, "-an", ...videoCodecArgs(encoder), "-r", String(fps), "-t", segDur.toFixed(3), out];
+    const args = [...inputs, ...overlayInputs, ...wmInputs, ...lgInputs, "-filter_complex_script", fc, "-map", `[${last}]`, "-an", ...videoCodecArgs(encoder), "-r", String(fps), "-t", segDur.toFixed(3), out];
     passes.push({ name: `segment ${s + 1}/${chunks.length}`, args, filterFiles: [{ name: fc, text: parts.join(";") }, ...capFiles], output: out, total: segDur });
     segFiles.push(out);
   });
@@ -526,8 +566,9 @@ export function buildRenderPlan(spec, io) {
   const { clips, width, height, fps = 30, transitions, transitionDuration = 0.4, motions, motionAmount = 0.08, trims, volumes, speeds, fadeIn = 0, fadeOut = 0,
     voiceFx, voiceLevel = 1,
     overlayDuration = 0, overlayOpacity = 0.3, overlayBlendMode = "overlay", overlayLoop = true, overlayEnabled = false,
-    watermarkSize = 0.15, watermarkX = 0.8, watermarkY = 0.88, watermarkOpacity = 0.9, watermarkEnabled = false } = spec;
-  const { paths, audioName, capChain = "", textChain = "", encoder = "libx264", audible, overlayName = null, watermarkName = null, sfxClips = [] } = io;
+    watermarkSize = 0.15, watermarkX = 0.8, watermarkY = 0.88, watermarkOpacity = 0.9, watermarkEnabled = false,
+    logoCorner = "br", logoSize = 0.12, logoOpacity = 0.9, logoEnabled = false } = spec;
+  const { paths, audioName, capChain = "", textChain = "", encoder = "libx264", audible, overlayName = null, watermarkName = null, logoName = null, sfxClips = [] } = io;
   const total = clips.length ? clips[clips.length - 1].start + clips[clips.length - 1].duration : 0;
   const hasTransition = Array.isArray(transitions) && clips.length >= 2 &&
     transitions.some((t, i) => i > 0 && t && t !== "cut");
@@ -542,16 +583,19 @@ export function buildRenderPlan(spec, io) {
   // A static image overlay also needs a second input → always the filter-graph
   // path (a watermark-only, all-images timeline would otherwise use concat).
   const hasWatermark = !!watermarkEnabled && !!watermarkName;
+  // A corner logo is another second input → always the filter-graph path.
+  const hasLogo = !!logoEnabled && !!logoName;
   // FX-lane sound effects can only be mixed in the filter-graph path (concat has
   // no per-marker audio inputs), so their presence also forces the graph.
   const hasSfx = Array.isArray(sfxClips) && sfxClips.length > 0;
-  const useGraph = hasTransition || hasMotion || hasVideo || hasOverlay || hasWatermark || hasSfx;
+  const useGraph = hasTransition || hasMotion || hasVideo || hasOverlay || hasWatermark || hasLogo || hasSfx;
   // Big graph timelines are split into segments + a join to dodge the OS limits.
   if (useGraph && clips.length > SEGMENT_MAX) return buildSegmentedPlan(spec, io);
   const common = { clips, paths, audioName, width, height, fps, fadeIn, fadeOut, total, capChain, textChain, encoder,
     voiceFx, voiceLevel,
     overlayName, overlayDuration, overlayOpacity, overlayBlendMode, overlayLoop, overlayEnabled,
-    watermarkName, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled, sfxClips };
+    watermarkName, watermarkSize, watermarkX, watermarkY, watermarkOpacity, watermarkEnabled,
+    logoName, logoCorner, logoSize, logoOpacity, logoEnabled, sfxClips };
   const filterFiles = [];
   const args = useGraph
     ? graphArgs({ ...common, transitions, transitionDuration, motions, motionAmount, trims, volumes, speeds, audible }, filterFiles)
@@ -628,6 +672,7 @@ export async function writeInputs(dir, spec, fileMap) {
   const audioName = fileMap["audio"];
   const overlayName = fileMap["overlay"] || null;
   const watermarkName = fileMap["watermark"] || null;
+  const logoName = fileMap["logo"] || null;
   const needBlack = clips.some((c) => c.gap);
   if (needBlack) await makeBlack(dir, width, height);
 
@@ -669,7 +714,7 @@ export async function writeInputs(dir, spec, fileMap) {
     }))
     .filter((s) => s.path);
 
-  return { paths, audioName, capChain, textChain, audible, overlayName, watermarkName, sfxClips };
+  return { paths, audioName, capChain, textChain, audible, overlayName, watermarkName, logoName, sfxClips };
 }
 
 // Parse ffmpeg -progress output → fraction in [0,1].

@@ -371,19 +371,19 @@ body {
 
 .render {
   width: 100%; font: inherit; font-weight: 700; font-size: 15px;
-  background: #18BFD6; color: #fff; border: 2px solid #0E8FA3; border-radius: 11px;
+  background: #1976D2; color: #fff; border: 2px solid #11559D; border-radius: 11px;
   padding: 13px; cursor: pointer;
-  box-shadow: 0 4px 12px rgba(24, 191, 214, 0.22);
+  box-shadow: 0 4px 12px rgba(25, 118, 210, 0.26);
   transition: filter .15s, transform .05s, background-color .15s, border-color .15s, box-shadow .15s;
 }
 .render:hover:not(:disabled) {
-  background: #22D3EE;
-  border-color: #18BFD6;
+  background: #1E88E5;
+  border-color: #1976D2;
 }
 .render:active:not(:disabled) {
-  background: #2CD9EB;
+  background: #1565C0;
   transform: scale(.97);
-  box-shadow: 0 0 0 3px rgba(24, 191, 214, .4);
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, .4);
 }
 .render:disabled {
   background: #d7d9dd; color: #6a6e76; border-color: transparent; box-shadow: none;
